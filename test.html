@@ -1,5 +1,22 @@
 <html>
 <head>Test</head>
-<body><h1>test</h1> <script src="agent-widget.js"></script>
+<body>
+<h1>test</h1>
+
+<!-- Set this BEFORE the widget script if you want to test the
+     authenticated tier. Leave it out entirely to test as a guest. -->
+<script>
+  window.AgentWidgetUserToken = "tok_demo_123"; // matches Auth Check's AUTH_USERS in n8n
+</script>
+
+<script src="agent-widget.js"
+  data-site-id="acme-co"
+  data-site-key="pk_live_replace_me"
+  data-url="https://sofife4260airhempcom.app.n8n.cloud/webhook-test/website-query"
+  data-name="Test Assistant"
+  data-color="#6366f1"
+  data-welcome="Hi! How can I help?"
+  data-position="right">
+</script>
 </body>
 </html>

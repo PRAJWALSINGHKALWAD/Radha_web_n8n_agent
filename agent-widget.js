@@ -1,12 +1,49 @@
 (function () {
 
   /* ── CONFIG ─────────────────────────────────────────────────────
-     Edit these values per client before deploying.               */
-  var WEBHOOK  = "https://ghbhjhghbjk.app.n8n.cloud/webhook-test/website-query";
-  var NAME     = "Site Assistant";
-  var COLOR    = "#6366f1";
-  var WELCOME  = "Hi \uD83D\uDC4B How can I help you today?";
-  var POSITION = "right"; /* "right" or "left" */
+     Nothing here is hardcoded per client. Every value is read from
+     data-* attributes on the <script> tag itself, e.g.:
+
+     <script src="https://cdn.example.com/agent-widget.js"
+       data-site-id="acme-co"
+       data-site-key="pk_live_xxxxx"
+       data-url="https://your-n8n.app.n8n.cloud/webhook/website-query"
+       data-name="Acme Assistant"
+       data-color="#6366f1"
+       data-welcome="Hi! How can I help?"
+       data-position="right"
+       data-icon="<svg viewBox='0 0 24 24'>...</svg>"  (optional; or an image URL. Default: built-in chat-bubble icon)
+       data-label="Chat with us"                          (optional; text next to the launcher icon. Default: icon only)
+     >
+     </script>
+
+     - SITE_KEY identifies which client site is calling (checked in
+       n8n's Auth Check node against KNOWN_SITE_KEYS or a lookup).
+     - For a per-visitor tier on top of that: if the host site's own
+       login system knows this visitor, it sets
+       window.AgentWidgetUserToken = "<whatever token their own auth
+       issues>" any time before a message is sent. We just forward it
+       as a header — we don't generate, parse, or verify it here.
+       n8n's Auth Check node maps that token to a name (or ignores
+       unrecognized tokens as guest). No token set = guest, no header
+       sent at all.                                                  */
+  var scriptTag = document.currentScript ||
+    (function () { var s = document.getElementsByTagName("script"); return s[s.length - 1]; })();
+  var CFG        = scriptTag ? scriptTag.dataset : {};
+  var SITE_ID    = CFG.siteId    || "";
+  var SITE_KEY   = CFG.siteKey   || "";
+  var WEBHOOK    = CFG.url       || CFG.webhook || ""; /* data-url is the primary name; data-webhook kept working for anything already using it */
+  var NAME       = CFG.name      || "Site Assistant";
+  var COLOR      = CFG.color     || "#6366f1";
+  var WELCOME    = CFG.welcome   || "Hi \uD83D\uDC4B How can I help you today?";
+  var POSITION   = CFG.position  || "right"; /* "right" or "left" */
+  var FAB_LABEL  = CFG.label     || ""; /* optional text next to the launcher icon; empty = icon only, like a normal chat bubble */
+  var CUSTOM_ICON = CFG.icon     || ""; /* optional: full <svg>...</svg> markup, or an image URL (png/jpg/svg). Falls back to the default chat-bubble icon if not given. */
+
+  if (!WEBHOOK || !SITE_KEY) {
+    console.error("[agent-widget] Missing required data-url (webhook endpoint) / data-site-key attributes. Widget not initialized.");
+    return;
+  }
 
   /* ── SESSION ID ─────────────────────────────────────────────────*/
   var SID;
@@ -45,6 +82,10 @@
     "box-shadow:0 4px 18px "+CS+";transition:transform .18s,box-shadow .18s;}",
     "#_awFab:hover{transform:scale(1.08);box-shadow:0 6px 26px "+rgba(C,.65)+"}",
     "#_awFab svg{width:23px;height:23px;display:block;pointer-events:none;}",
+    "#_awFab img{width:23px;height:23px;display:block;pointer-events:none;border-radius:50%;object-fit:cover;}",
+    /* when a label is present, the fab becomes a pill instead of a circle */
+    "#_awFab.awHasLabel{width:auto;height:48px;border-radius:24px;padding:0 20px 0 16px;gap:9px;}",
+    "#_awFab.awHasLabel span{color:#fff;font-size:14px;font-weight:600;white-space:nowrap;pointer-events:none;}",
 
     /* panel */
     "#_awPanel{width:350px;max-height:520px;background:#fff;border-radius:16px;",
@@ -213,7 +254,24 @@
 
   var ICON_CHAT = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
   var ICON_CLOSE = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-  fab.innerHTML = ICON_CHAT;
+
+  /* Resolve the launcher icon: explicit <svg> markup wins, then an
+     image URL (png/jpg/webp/svg file), else fall back to the default
+     built-in chat-bubble icon. No guessing beyond a simple markup check. */
+  function resolveOpenIcon() {
+    if (!CUSTOM_ICON) return ICON_CHAT;
+    var trimmed = CUSTOM_ICON.trim();
+    if (trimmed.indexOf("<svg") === 0) return trimmed;
+    return '<img src="' + safe(trimmed) + '" alt="" />';
+  }
+  var ICON_OPEN = resolveOpenIcon();
+
+  if (FAB_LABEL) {
+    fab.classList.add("awHasLabel");
+    fab.innerHTML = ICON_OPEN + '<span>' + safe(FAB_LABEL) + '</span>';
+  } else {
+    fab.innerHTML = ICON_OPEN;
+  }
 
   root.appendChild(panel);
   root.appendChild(fab);
@@ -231,6 +289,7 @@
   function openChat() {
     isOpen = true;
     panel.classList.add("open");
+    fab.classList.remove("awHasLabel");
     fab.innerHTML = ICON_CLOSE;
     if (!msgs.children.length) addBot({ answer: WELCOME });
     setTimeout(function () { textarea.focus(); }, 200);
@@ -240,7 +299,12 @@
   function closeChat() {
     isOpen = false;
     panel.classList.remove("open");
-    fab.innerHTML = ICON_CHAT;
+    if (FAB_LABEL) {
+      fab.classList.add("awHasLabel");
+      fab.innerHTML = ICON_OPEN + '<span>' + safe(FAB_LABEL) + '</span>';
+    } else {
+      fab.innerHTML = ICON_OPEN;
+    }
   }
 
   fab.addEventListener("click", function () { isOpen ? closeChat() : openChat(); });
@@ -267,9 +331,24 @@
   function request(text, typing) {
     var ctrl  = typeof AbortController !== "undefined" ? new AbortController() : null;
     var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 30000) : null;
-    var opts  = {
+
+    /* If the CLIENT WEBSITE knows this visitor is logged in, it sets
+       window.AgentWidgetUserToken = "<some token their own login
+       system issued>" before this script loads (or any time before
+       sending a message). We just forward that token as a header —
+       we don't generate it, verify it, or know what's inside it.
+       n8n's Auth Check node is what maps token -> name (or rejects
+       tokens it doesn't recognize back to guest treatment).
+       If the host page never sets it, we send no such header at all
+       — that's exactly how a guest is distinguished. */
+    var userToken = window.AgentWidgetUserToken || null;
+
+    var headers = { "Content-Type": "application/json", "x-site-id": SITE_ID, "x-site-key": SITE_KEY };
+    if (userToken) headers["x-user-token"] = userToken;
+
+    var opts = {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: headers,
       body: JSON.stringify({ message: text, sessionId: SID, timestamp: Date.now() })
     };
     if (ctrl) opts.signal = ctrl.signal;
