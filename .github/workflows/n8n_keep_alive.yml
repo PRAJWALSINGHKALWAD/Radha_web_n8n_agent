@@ -1,0 +1,19 @@
+name: Keep n8n backend warm
+
+on:
+  schedule:
+    # Every 10 minutes. Render's free tier spins down after 15 minutes
+    # idle, so this stays comfortably under that.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {} # lets you trigger it manually from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Curl the n8n instance
+        run: |
+          # Hits n8n's own root/health path, not the agent webhook itself —
+          # this just needs to keep the container awake, not run a real
+          # workflow execution (which would eat into execution limits).
+          curl -sf --max-time 20 "${{ secrets.N8N_BASE_URL }}" || echo "Ping failed, instance may be cold-starting"
